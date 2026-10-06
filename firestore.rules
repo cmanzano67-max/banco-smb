@@ -4,7 +4,7 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() { return request.auth != null; }
-    function isDT() { return signedIn() && request.auth.uid in ['NoNYMRFvk4UoVEr4z9qscsxXXFI3']; }
+    function isDT() { return signedIn() && request.auth.uid in ['DT_UID']; }
     function isMember() {
       return signedIn() && (isDT() || request.auth.uid in get(/databases/$(database)/documents/club/state).data.memberUids);
     }
