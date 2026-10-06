@@ -1,0 +1,41 @@
+rules_version = '2';
+// Banco de situaciones SMB · reglas de acceso a los datos
+// DT_UID: el código de usuario de la Dirección Técnica (sale en la pantalla «Casi está» la primera vez que entra).
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function isDT() { return signedIn() && request.auth.uid in ['DT_UID']; }
+    function isMember() {
+      return signedIn() && (isDT() || request.auth.uid in get(/databases/$(database)/documents/club/state).data.memberUids);
+    }
+
+    // Banco del club: lo leen los entrenadores con acceso; solo escribe la DT
+    match /club/state { allow read: if isMember(); allow write: if isDT(); }
+    match /tasks/{id} { allow read: if isMember(); allow write: if isDT(); }
+    match /historial/{id} { allow read: if isMember(); allow write: if isDT(); }
+    match /liga/{id} { allow read: if isMember(); allow write: if isDT(); }
+
+    // Perfil (nombre, personaje y poder): cada uno el suyo; lo ven los que tienen acceso
+    match /profiles/{uid} {
+      allow read: if isMember() || (signedIn() && request.auth.uid == uid);
+      allow write: if signedIn() && request.auth.uid == uid;
+    }
+
+    // Ejercicios y sesiones de cada entrenador: solo los ve y los cambia su dueño
+    match /users/{uid}/{rest=**} {
+      allow read, write: if signedIn() && request.auth.uid == uid;
+    }
+
+    // Votos: todos los ven; cada uno escribe solo el suyo
+    match /votes/{uid} {
+      allow read: if isMember();
+      allow write: if isMember() && request.auth.uid == uid;
+    }
+
+    // Lo que se manda a la DT
+    match /inbox/{id} {
+      allow create: if isMember() && request.resource.data.uid == request.auth.uid;
+      allow read, update, delete: if isDT() || (isMember() && resource.data.uid == request.auth.uid);
+    }
+  }
+}
