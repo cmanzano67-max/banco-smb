@@ -166,8 +166,22 @@
         liga: C.liga.map(x => dec(x.data)).filter(Boolean).sort((a, b) => a.n - b.n),
         memberUids: C.state.memberUids || [], dtUids: C.state.dtUids || [], memberEmails: C.state.memberEmails || [],
       });
-      const byEmail = em => { const e = Object.entries(C.profiles).find(([, p]) => norm(p.email) === norm(em)); return e ? e[1] : null; };
-      bank.coaches = (st.coaches || []).map(c => { const p = (c.uid && C.profiles[c.uid]) || (c.email && byEmail(c.email)); const pj = p ? dec(p) || {} : {}; return p ? Object.assign({}, c, { name: p.name || c.name, avatar: pj.avatar || c.avatar, poder: pj.poder || c.poder }) : c; });
+      const PR = C.profiles || {};
+      const byEmail = em => Object.entries(PR).find(([, p]) => norm(p.email) === norm(em)) || null;
+      const linked = new Set();
+      const coaches = (st.coaches || []).map(c => { const e = (c.uid && PR[c.uid] && [c.uid, PR[c.uid]]) || (c.email && byEmail(c.email)); if (!e) return c; linked.add(e[0]); const p = e[1], pj = dec(p) || {}; return Object.assign({}, c, { name: p.name || c.name, avatar: pj.avatar || c.avatar, poder: pj.poder || c.poder }); });
+      // todo el que tiene acceso está en el vestuario: su personaje y su poder se guardan solos, sin mandar nada a la DT
+      const S = C.state, isMem = (u, p) => (S.memberUids || []).includes(u) || (S.dtUids || []).includes(u) || DT_UIDS.includes(u) || (S.memberEmails || []).includes(norm(p.email));
+      Object.entries(PR).forEach(([u, p]) => {
+        if (linked.has(u) || !isMem(u, p)) return;
+        const name = String(p.name || p.nameHint || '').trim(); if (!name) return;
+        const pj = dec(p) || {}, ex = coaches.find(c => norm(c.name) === norm(name));
+        if (ex) Object.assign(ex, { avatar: pj.avatar || ex.avatar, poder: pj.poder || ex.poder }); else coaches.push({ name, uid: u, avatar: pj.avatar, poder: pj.poder, bonus: [] });
+      });
+      bank.coaches = coaches;
+      // amistosos: cada uno guarda los suyos en su perfil; aquí se juntan los de todos
+      const am = new Map(); Object.values(PR).forEach(p => (((dec(p) || {}).amis) || []).forEach(x => { if (x && x.id && x.r) am.set(x.id, x); }));
+      bank.amistosos = [...am.values()].sort((a, b) => b.ts - a.ts).slice(0, 80);
       lastBank = bank;
       if (window.SMB) window.SMB.setBank(bank);
     }, 60);
@@ -186,7 +200,7 @@
     diff('tasks', next.tasks || [], t => t.id, prev.tasks);
     diff('historial', next.historial || [], h => String(h.id).replace(/[^\w.-]/g, '_'), prev.historial);
     diff('liga', next.liga || [], j => 'j' + j.n, prev.liga);
-    const rest = Object.assign({}, next); ['tasks', 'historial', 'liga', 'memberUids', 'dtUids', 'memberEmails'].forEach(k => delete rest[k]);
+    const rest = Object.assign({}, next); ['tasks', 'historial', 'liga', 'memberUids', 'dtUids', 'memberEmails', 'amistosos'].forEach(k => delete rest[k]);
     rest.coaches = (rest.coaches || []).map(c => (c.uid || c.email) ? Object.assign({ name: c.name, bonus: c.bonus || [] }, c.uid ? { uid: c.uid } : {}, c.email ? { email: c.email } : {}) : c);
     delete rest.memberEmails;
     ops.push({ op: 'set', path: 'club/state', data: Object.assign(enc(rest), { memberUids: next.memberUids || prev.memberUids || [], memberEmails: next.memberEmails || prev.memberEmails || [], dtUids: next.dtUids || prev.dtUids || [me.uid] }) });
@@ -282,7 +296,9 @@
     const g = readLS(LS.game, null), name = localStorage.getItem(LS.autor) || '';
     const d = { email: me.email || '', ts: Date.now() };
     if (name) d.name = name; else if (me.name && !pulled) d.nameHint = me.name;
-    if (g && g.av) Object.assign(d, enc({ avatar: g.av, poder: g.poder || '' }));
+    const pj = {}; if (g && g.av) { pj.avatar = g.av; pj.poder = g.poder || ''; }
+    if (g && Array.isArray(g.amis) && g.amis.length) pj.amis = g.amis.slice(-10);
+    if (Object.keys(pj).length) Object.assign(d, enc(pj));
     await B.merge('profiles/' + me.uid, d);
   }
 
