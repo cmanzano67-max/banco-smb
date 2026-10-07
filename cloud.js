@@ -65,7 +65,7 @@
     g.hidden = !html; if (html) g.innerHTML = `<div class="cl-card"><img src="${esc(window.SMB_LOGO || '')}" alt="" width="64" height="64"><div class="cl-eyebrow">CHP Santa María la Blanca</div>${html}</div>`;
     document.documentElement.classList.toggle('cl-locked', !!html);
   }
-  const loginHTML = (msg) => `<h1>Banco de situaciones</h1><p>Entra con tu cuenta. La primera vez, la Dirección Técnica tiene que darte acceso.</p>
+  const loginHTML = (msg) => `<h1>Banco de situaciones</h1><p>Entra con Google o con tu email: usa el mismo email que le diste a la Dirección Técnica y tendrás acceso directo.</p>
     <button class="btn primary cl-wide" type="button" data-cl="google">Entrar con Google</button>
     <div class="cl-or"><span>o con tu email</span></div>
     <label class="ses-f">Email<input type="email" id="cl-email" autocomplete="email"></label>
