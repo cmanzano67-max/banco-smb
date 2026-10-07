@@ -20,7 +20,7 @@
     firebase.initializeApp(window.SMB_FIREBASE);
     const auth = firebase.auth(), db = firebase.firestore();
     try { db.enablePersistence({ synchronizeTabs: true }).catch(() => {}); } catch (e) {}
-    const user = u => u ? { uid: u.uid, email: u.email || '', name: u.displayName || '' } : null;
+    const user = u => u ? { uid: u.uid, email: u.email || '', name: u.displayName || '', verified: !!u.emailVerified, password: (u.providerData || []).some(p => p && p.providerId === 'password') && !(u.providerData || []).some(p => p && p.providerId === 'google.com') } : null;
     return {
       onAuth: cb => auth.onAuthStateChanged(u => cb(user(u))),
       google: () => {
@@ -28,7 +28,9 @@
         return auth.signInWithPopup(p).catch(e => { if (e && /popup|operation-not-supported/.test(e.code || '')) return auth.signInWithRedirect(p); throw e; });
       },
       emailIn: (email, pass) => auth.signInWithEmailAndPassword(email, pass),
-      emailUp: (email, pass) => auth.createUserWithEmailAndPassword(email, pass),
+      emailUp: (email, pass) => auth.createUserWithEmailAndPassword(email, pass).then(c => c.user.sendEmailVerification().catch(() => {})),
+      verify: () => auth.currentUser ? auth.currentUser.sendEmailVerification() : Promise.resolve(),
+      refresh: async () => { if (!auth.currentUser) return null; await auth.currentUser.reload(); await auth.currentUser.getIdToken(true); return user(auth.currentUser); },
       reset: email => auth.sendPasswordResetEmail(email),
       signOut: () => auth.signOut(),
       listenDoc: (p, cb, er) => db.doc(p).onSnapshot(s => cb(s.exists ? s.data() : null), er),
@@ -71,7 +73,10 @@
     <div class="cl-row"><button class="btn primary" type="button" data-cl="in">Entrar</button><button class="btn" type="button" data-cl="up">Crear cuenta</button></div>
     <button class="linkb" type="button" data-cl="reset">He olvidado mi contraseña</button>
     <p class="msg${msg ? ' err' : ''}" id="cl-msg" aria-live="polite">${esc(msg || '')}</p>`;
-  const pendingHTML = () => `<h1>Casi está</h1><p>Tu cuenta (${esc(me.email || me.name)}) está creada. Falta que la Dirección Técnica te dé acceso. En cuanto lo haga, esta pantalla se abre sola.</p>
+  const pendingHTML = () => me.password && !me.verified ? `<h1>Confirma tu email</h1><p>Te hemos mandado un correo a <b>${esc(me.email)}</b> con un enlace. Púlsalo (mira también en «Spam») y vuelve aquí.</p>
+    <div class="cl-row"><button class="btn primary" type="button" data-cl="verified">Ya lo he confirmado</button><button class="btn" type="button" data-cl="resend">Reenviar el correo</button></div>
+    <button class="linkb" type="button" data-cl="out">Salir</button>
+    <p class="msg" id="cl-msg" aria-live="polite"></p>` : `<h1>Casi está</h1><p>Tu cuenta (${esc(me.email || me.name)}) está creada. Falta que la Dirección Técnica te dé acceso. En cuanto lo haga, esta pantalla se abre sola.</p>
     <label class="ses-f">Tu nombre, como firmas tus ejercicios<input type="text" id="cl-name" value="${esc(readLS(LS.autor, null) || localStorage.getItem(LS.autor) || me.name || '')}"></label>
     <div class="cl-row"><button class="btn primary" type="button" data-cl="name">Guardar nombre</button><button class="btn ghost" type="button" data-cl="out">Salir</button></div>
     <p class="msg" id="cl-msg" aria-live="polite"></p>
@@ -93,6 +98,10 @@
       else if (a === 'in') await B.emailIn(v('cl-email').trim(), v('cl-pass'));
       else if (a === 'up') await B.emailUp(v('cl-email').trim(), v('cl-pass'));
       else if (a === 'reset') { if (!v('cl-email').trim()) return say('Escribe tu email arriba y vuelve a pulsar.', true); await B.reset(v('cl-email').trim()); say('Te hemos mandado un correo para cambiar la contraseña.'); }
+      else if (a === 'resend') { await B.verify(); say('Correo reenviado.'); }
+      else if (a === 'verified') { const u = await B.refresh(); if (u) me = u; if (!me.verified) { say('Todavía no consta confirmado. Pulsa el enlace del correo y vuelve a probar.', true); return; } unsub.forEach(f => { try { f(); } catch (er) {} }); unsub = []; gate('<h1>Entrando…</h1>'); listenState(); }
+      else if (a === 'prereg') { const n = v('cl-pre-name').trim(), em = norm(v('cl-pre-email')); if (!n || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em)) { window.SMB.toast('Pon el nombre y un email válido.'); return; } await prereg(n, em); }
+      else if (a === 'unprereg') await unprereg(b.dataset.email);
       else if (a === 'out') { await B.signOut(); clearPersonal(); setTimeout(() => location.reload(), 60); }
       else if (a === 'name') { const n = v('cl-name').trim(); if (!n) return; try { localStorage.setItem(LS.autor, n); } catch (er) {} await pushProfile(); say('Nombre guardado.'); }
       else if (a === 'import') { const f = document.getElementById('cl-bankfile').files[0]; if (!f) return say('Elige el archivo.', true); const j = JSON.parse(await f.text()); await importBank(j); say('Banco importado.'); }
@@ -125,7 +134,7 @@
     unsub.push(B.listenDoc('club/state', d => {
       C.state = d;
       if (d && Array.isArray(d.dtUids) && d.dtUids.includes(me.uid)) isDT = true;
-      member = isDT || !!(d && (d.memberUids || []).includes(me.uid));
+      member = isDT || !!(d && ((d.memberUids || []).includes(me.uid) || (me.verified && (d.memberEmails || []).includes(norm(me.email)))));
       if (!d && isDT) { gate(bootHTML()); return; }
       if (!member) { gate(pendingHTML()); return; }
       onMember();
@@ -155,9 +164,10 @@
         tasks: C.tasks.map(x => ({ o: x.data.o || 0, t: dec(x.data) })).filter(x => x.t).sort((a, b) => a.o - b.o).map(x => x.t),
         historial: C.hist.map(x => ({ o: x.data.o || 0, t: dec(x.data) })).filter(x => x.t).sort((a, b) => a.o - b.o).map(x => x.t),
         liga: C.liga.map(x => dec(x.data)).filter(Boolean).sort((a, b) => a.n - b.n),
-        memberUids: C.state.memberUids || [], dtUids: C.state.dtUids || [],
+        memberUids: C.state.memberUids || [], dtUids: C.state.dtUids || [], memberEmails: C.state.memberEmails || [],
       });
-      bank.coaches = (st.coaches || []).map(c => { const p = c.uid && C.profiles[c.uid]; const pj = p ? dec(p) || {} : {}; return p ? Object.assign({}, c, { name: p.name || c.name, avatar: pj.avatar || c.avatar, poder: pj.poder || c.poder }) : c; });
+      const byEmail = em => { const e = Object.entries(C.profiles).find(([, p]) => norm(p.email) === norm(em)); return e ? e[1] : null; };
+      bank.coaches = (st.coaches || []).map(c => { const p = (c.uid && C.profiles[c.uid]) || (c.email && byEmail(c.email)); const pj = p ? dec(p) || {} : {}; return p ? Object.assign({}, c, { name: p.name || c.name, avatar: pj.avatar || c.avatar, poder: pj.poder || c.poder }) : c; });
       lastBank = bank;
       if (window.SMB) window.SMB.setBank(bank);
     }, 60);
@@ -176,9 +186,10 @@
     diff('tasks', next.tasks || [], t => t.id, prev.tasks);
     diff('historial', next.historial || [], h => String(h.id).replace(/[^\w.-]/g, '_'), prev.historial);
     diff('liga', next.liga || [], j => 'j' + j.n, prev.liga);
-    const rest = Object.assign({}, next); ['tasks', 'historial', 'liga', 'memberUids', 'dtUids'].forEach(k => delete rest[k]);
-    rest.coaches = (rest.coaches || []).map(c => c.uid ? { name: c.name, uid: c.uid, bonus: c.bonus || [] } : c);
-    ops.push({ op: 'set', path: 'club/state', data: Object.assign(enc(rest), { memberUids: next.memberUids || prev.memberUids || [], dtUids: next.dtUids || prev.dtUids || [me.uid] }) });
+    const rest = Object.assign({}, next); ['tasks', 'historial', 'liga', 'memberUids', 'dtUids', 'memberEmails'].forEach(k => delete rest[k]);
+    rest.coaches = (rest.coaches || []).map(c => (c.uid || c.email) ? Object.assign({ name: c.name, bonus: c.bonus || [] }, c.uid ? { uid: c.uid } : {}, c.email ? { email: c.email } : {}) : c);
+    delete rest.memberEmails;
+    ops.push({ op: 'set', path: 'club/state', data: Object.assign(enc(rest), { memberUids: next.memberUids || prev.memberUids || [], memberEmails: next.memberEmails || prev.memberEmails || [], dtUids: next.dtUids || prev.dtUids || [me.uid] }) });
     await B.batch(ops);
   }
   async function importBank(j) {
@@ -204,8 +215,18 @@
     await window.SMB.saveBankExtra({ coaches, memberUids: [...new Set([...(b.memberUids || []), uid])] }, `${name} ya tiene acceso.`);
   }
   async function revoke(uid) {
+    const b = lastBank, p = C.profiles[uid] || {};
+    await window.SMB.saveBankExtra({ memberUids: (b.memberUids || []).filter(x => x !== uid), memberEmails: (b.memberEmails || []).filter(x => x !== norm(p.email)) }, 'Acceso quitado. Su personaje y sus ejercicios siguen.');
+  }
+  async function prereg(name, email) {
+    const b = lastBank, coaches = (b.coaches || []).map(c => Object.assign({}, c));
+    const c = coaches.find(x => norm(x.email) === email) || coaches.find(x => !x.email && norm(x.name) === norm(name));
+    if (c) { c.email = email; c.name = c.name || name; } else coaches.push({ name, email, bonus: [] });
+    await window.SMB.saveBankExtra({ coaches, memberEmails: [...new Set([...(b.memberEmails || []), email])] }, `${name} dado de alta. Cuando entre con ${email}, tendrá acceso directo.`);
+  }
+  async function unprereg(email) {
     const b = lastBank;
-    await window.SMB.saveBankExtra({ memberUids: (b.memberUids || []).filter(x => x !== uid) }, 'Acceso quitado. Su personaje y sus ejercicios siguen.');
+    await window.SMB.saveBankExtra({ coaches: (b.coaches || []).filter(x => !(norm(x.email) === email && !x.uid && !Object.values(C.profiles).some(p => norm(p.email) === email))), memberEmails: (b.memberEmails || []).filter(x => x !== email) }, 'Alta quitada.');
   }
 
   // ---------- lo de cada entrenador ----------
@@ -222,7 +243,8 @@
     const m = dec(meta);
     if (!(m && m.autor) && !localStorage.getItem(LS.autor)) {
       const pr = await B.getDoc('profiles/' + me.uid).catch(() => null);
-      const n = (pr && (pr.name || pr.nameHint)) || me.name; if (n) try { localStorage.setItem(LS.autor, n); } catch (e) {}
+      const st = C.state ? dec(C.state) || {} : {}, pc = (st.coaches || []).find(c => norm(c.email) === norm(me.email) || c.uid === me.uid);
+      const n = (pc && pc.name) || (pr && (pr.name || pr.nameHint)) || me.name; if (n) try { localStorage.setItem(LS.autor, n); } catch (e) {}
     }
     if (m) {
       try {
@@ -302,9 +324,16 @@
     accessHTML: () => {
       const b = lastBank || {}, mem = new Set(b.memberUids || []);
       const all = Object.entries(C.profiles);
-      const pend = all.filter(([uid]) => !mem.has(uid)), ok = all.filter(([uid]) => mem.has(uid));
+      const memE = new Set(b.memberEmails || []), has = ([uid, p]) => mem.has(uid) || memE.has(norm(p.email));
+      const pend = all.filter(x => !has(x)), ok = all.filter(x => has(x));
       const row = ([uid, p], btn) => `<li class="dt-row"><span class="dt-thumb cl-ini">${esc((p.name || p.nameHint || p.email || '?').slice(0, 1).toUpperCase())}</span><span class="dt-txt"><b>${esc(p.name || p.nameHint || 'Sin nombre')}${me && uid === me.uid ? ' (tú)' : ''}</b><small>${esc(p.email || '')}</small></span>${btn}</li>`;
+      const emailsIn = new Set(Object.values(C.profiles).map(p => norm(p.email)));
+      const pre = (b.memberEmails || []).filter(e => !emailsIn.has(e)).map(e => ({ e, c: (b.coaches || []).find(x => norm(x.email) === e) }));
       return `<section class="ses-sec"><h2 class="h-sec">Acceso</h2>
+        <h3 class="h-sub">Dar de alta a un entrenador</h3>
+        <p class="sub">Con el email con el que va a entrar (su Gmail, si entra con Google). Al entrar tendrá acceso directo y aparecerá en el cuerpo técnico con este nombre.</p>
+        <div class="cl-pre"><input type="text" id="cl-pre-name" placeholder="Nombre, como firma sus ejercicios" aria-label="Nombre"><input type="email" id="cl-pre-email" placeholder="email@ejemplo.com" aria-label="Email"><button class="btn primary" type="button" data-cl="prereg">Dar de alta</button></div>
+        ${pre.length ? `<h3 class="h-sub">Dados de alta, todavía sin entrar (${pre.length})</h3><ul class="dt-list">${pre.map(({ e, c }) => `<li class="dt-row"><span class="dt-thumb cl-ini">${esc(((c && c.name) || e).slice(0, 1).toUpperCase())}</span><span class="dt-txt"><b>${esc((c && c.name) || 'Sin nombre')}</b><small>${esc(e)}</small></span><button class="btn small ghost" type="button" data-cl="unprereg" data-email="${esc(e)}">Quitar</button></li>`).join('')}</ul>` : ''}
         ${pend.length ? `<h3 class="h-sub">Esperando acceso (${pend.length})</h3><ul class="dt-list">${pend.map(x => row(x, `<button class="btn small primary" type="button" data-cl="grant" data-uid="${esc(x[0])}">Dar acceso</button>`)).join('')}</ul>` : '<p class="sub">Nadie esperando. Cuando un entrenador crea su cuenta, aparece aquí.</p>'}
         ${ok.length ? `<details><summary>Con acceso (${ok.length})</summary><ul class="dt-list">${ok.map(x => row(x, `<button class="btn small ghost" type="button" data-cl="revoke" data-uid="${esc(x[0])}">Quitar acceso</button>`)).join('')}</ul></details>` : ''}
       </section>`;

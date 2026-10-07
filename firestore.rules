@@ -6,7 +6,10 @@ service cloud.firestore {
     function signedIn() { return request.auth != null; }
     function isDT() { return signedIn() && request.auth.uid in ['NoNYMRFvk4UoVEr4z9qscsxXXFI3']; }
     function isMember() {
-      return signedIn() && (isDT() || request.auth.uid in get(/databases/$(database)/documents/club/state).data.memberUids);
+      return signedIn() && (isDT()
+        || request.auth.uid in get(/databases/$(database)/documents/club/state).data.get('memberUids', [])
+        || (request.auth.token.email_verified == true
+            && request.auth.token.email.lower() in get(/databases/$(database)/documents/club/state).data.get('memberEmails', [])));
     }
 
     // Banco del club: lo leen los entrenadores con acceso; solo escribe la DT
