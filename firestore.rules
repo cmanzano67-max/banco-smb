@@ -35,6 +35,14 @@ service cloud.firestore {
       allow write: if isMember() && request.auth.uid == uid;
     }
 
+    // Directorio de sesiones: todo el cuerpo técnico las ve; cada uno escribe solo las suyas
+    match /shared/{id} {
+      allow read: if isMember();
+      allow create: if isMember() && request.resource.data.uid == request.auth.uid;
+      allow update: if isMember() && resource.data.uid == request.auth.uid && request.resource.data.uid == request.auth.uid;
+      allow delete: if isDT() || (signedIn() && resource.data.uid == request.auth.uid);
+    }
+
     // Lo que se manda a la DT
     match /inbox/{id} {
       allow create: if isMember() && request.resource.data.uid == request.auth.uid;
