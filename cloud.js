@@ -184,7 +184,9 @@
       // amistosos: cada uno guarda los suyos en su perfil; aquí se juntan los de todos
       const am = new Map(); Object.values(PR).forEach(p => (((dec(p) || {}).amis) || []).forEach(x => { if (x && x.id && x.r) am.set(x.id, x); }));
       bank.amistosos = [...am.values()].sort((a, b) => b.ts - a.ts).slice(0, 80);
-      bank.sesClub = (C.shared || []).map(x => ({ id: x.id, autor: x.data.autor || '', ts: x.data.ts || 0, mine: !!me && x.data.uid === me.uid, s: dec(x.data) })).filter(x => x.s && Array.isArray(x.s.bloques));
+      const sh = (C.shared || []).map(x => ({ id: x.id, k: x.data.k || 'ses', autor: x.data.autor || '', ts: x.data.ts || 0, mine: !!me && x.data.uid === me.uid, d: dec(x.data) })).filter(x => x.d);
+      bank.sesClub = sh.filter(x => x.k === 'ses' && Array.isArray(x.d.bloques)).map(x => ({ id: x.id, autor: x.autor, ts: x.ts, mine: x.mine, s: x.d }));
+      bank.ejClub = sh.filter(x => x.k === 'ej' && x.d.id).map(x => ({ id: x.id, autor: x.autor, ts: x.ts, mine: x.mine, t: x.d }));
       lastBank = bank;
       if (window.SMB) window.SMB.setBank(bank);
     }, 60);
@@ -203,7 +205,7 @@
     diff('tasks', next.tasks || [], t => t.id, prev.tasks);
     diff('historial', next.historial || [], h => String(h.id).replace(/[^\w.-]/g, '_'), prev.historial);
     diff('liga', next.liga || [], j => 'j' + j.n, prev.liga);
-    const rest = Object.assign({}, next); ['tasks', 'historial', 'liga', 'memberUids', 'dtUids', 'memberEmails', 'amistosos', 'sesClub'].forEach(k => delete rest[k]);
+    const rest = Object.assign({}, next); ['tasks', 'historial', 'liga', 'memberUids', 'dtUids', 'memberEmails', 'amistosos', 'sesClub', 'ejClub'].forEach(k => delete rest[k]);
     rest.coaches = (rest.coaches || []).map(c => (c.uid || c.email) ? Object.assign({ name: c.name, bonus: c.bonus || [] }, c.uid ? { uid: c.uid } : {}, c.email ? { email: c.email } : {}) : c);
     delete rest.memberEmails;
     ops.push({ op: 'set', path: 'club/state', data: Object.assign(enc(rest), { memberUids: next.memberUids || prev.memberUids || [], memberEmails: next.memberEmails || prev.memberEmails || [], dtUids: next.dtUids || prev.dtUids || [me.uid] }) });
@@ -286,9 +288,9 @@
       const list = readLS(LS[k], []), ops = [], ids = new Set();
       list.forEach(t => { if (!t || !t.id) return; ids.add(t.id); const s = JSON.stringify(t); if (lastPushed[k].get(t.id) !== s) ops.push({ op: 'set', path: `${base}/${k}/${t.id}`, data: enc(t) }); });
       lastPushed[k].forEach((v, id) => { if (!ids.has(id)) ops.push({ op: 'del', path: `${base}/${k}/${id}` }); });
-      if (!ops.length) { if (k === 'sessions') pushShared(); return; }
+      if (!ops.length) { pushShared(); return; }
       await B.batch(ops);
-      if (k === 'sessions') pushShared();
+      pushShared();
       lastPushed[k] = new Map(list.filter(t => t && t.id).map(t => [t.id, JSON.stringify(t)]));
     } else {
       await B.set(base + '/meta/state', enc({ autor: localStorage.getItem(LS.autor) || '', game: readLS(LS.game, null), envios: readLS(LS.envios, []) }));
@@ -301,11 +303,13 @@
     if (!me || !pulled || !C.sharedReady) return;
     const autor = localStorage.getItem(LS.autor) || '', mineDocs = new Map((C.shared || []).filter(x => x.data.uid === me.uid).map(x => [x.id, x.data]));
     const ops = [], keep = new Set();
-    readLS(LS.sessions, []).forEach(ss => {
-      if (!ss || !ss.id || !(ss.bloques || []).some(b => b && b.task)) return;
-      const id = me.uid + '_' + String(ss.id).replace(/[^\w.-]/g, '_'), j = JSON.stringify(ss), old = mineDocs.get(id); keep.add(id);
-      if (!old || old.j !== j || old.autor !== autor) ops.push({ op: 'set', path: 'shared/' + id, data: { uid: me.uid, autor, ts: ss.ts || Date.now(), j } });
-    });
+    const add = (k, x, ts) => {
+      const id = me.uid + '_' + String(x.id).replace(/[^\w.-]/g, '_'), j = JSON.stringify(x), old = mineDocs.get(id); keep.add(id);
+      if (!old || old.j !== j || old.autor !== autor || (old.k || 'ses') !== k) ops.push({ op: 'set', path: 'shared/' + id, data: { uid: me.uid, k, autor, ts: ts || (old && old.ts) || Date.now(), j } });
+    };
+    readLS(LS.sessions, []).forEach(ss => { if (ss && ss.id && (ss.bloques || []).some(b => b && b.task)) add('ses', ss, ss.ts); });
+    // los ejercicios propios con nombre (los borradores no salen hasta que se guardan de verdad)
+    readLS(LS.mine, []).forEach(t => { if (t && t.id && (t.title || '').trim() && !t.borrador) add('ej', t, t.ts); });
     mineDocs.forEach((v, id) => { if (!keep.has(id)) ops.push({ op: 'del', path: 'shared/' + id }); });
     if (ops.length) await B.batch(ops).catch(() => {});
   }
