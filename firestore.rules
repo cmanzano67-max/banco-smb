@@ -43,6 +43,14 @@ service cloud.firestore {
       allow delete: if isDT() || (signedIn() && resource.data.uid == request.auth.uid);
     }
 
+    // Amistosos a la vez: los ve el cuerpo técnico; los cambian los dos que juegan
+    match /partidas/{id} {
+      allow read: if isMember();
+      allow create: if isMember() && request.resource.data.a == request.auth.uid;
+      allow update: if isMember() && (resource.data.a == request.auth.uid || resource.data.b == request.auth.uid);
+      allow delete: if isDT() || (signedIn() && resource.data.a == request.auth.uid);
+    }
+
     // Lo que se manda a la DT
     match /inbox/{id} {
       allow create: if isMember() && request.resource.data.uid == request.auth.uid;

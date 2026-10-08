@@ -148,6 +148,9 @@
     unsub.push(B.listenCol('liga', d => { C.liga = d; assemble(); }));
     unsub.push(B.listenCol('profiles', d => { C.profiles = Object.fromEntries(d.map(x => [x.id, x.data])); assemble(); }));
     unsub.push(B.listenCol('votes', d => { C.votes = d; voteSubs.forEach(f => f()); }));
+    // retos en directo: si alguien me reta y tengo la app abierta, me sale la invitación
+    const shownInv = new Set();
+    unsub.push(B.listenCol('partidas', d => { d.forEach(x => { const m = Object.assign({ id: x.id }, x.data); if (m.b === me.uid && m.estado === 'invitado' && Date.now() - (m.ts || 0) < 90000 && !shownInv.has(m.id)) { shownInv.add(m.id); if (window.SMB && window.SMB.invite) window.SMB.invite(m); } }); }, () => {}));
     // directorio de sesiones del cuerpo técnico (si la regla no está publicada, la app sigue sin él)
     unsub.push(B.listenCol('shared', d => { const first = !C.sharedReady; C.shared = d; C.sharedReady = true; assemble(); if (first) pushShared(); }, () => { C.shared = []; assemble(); }));
     if (isDT) unsub.push(B.listenCol('inbox', d => { C.inbox = d.map(x => Object.assign({ id: x.id }, x.data)).filter(x => x.estado !== 'hecho').sort((a, b) => b.ts - a.ts); if (window.SMB) window.SMB.render(); }));
@@ -171,14 +174,14 @@
       const PR = C.profiles || {};
       const byEmail = em => Object.entries(PR).find(([, p]) => norm(p.email) === norm(em)) || null;
       const linked = new Set();
-      const coaches = (st.coaches || []).map(c => { const e = (c.uid && PR[c.uid] && [c.uid, PR[c.uid]]) || (c.email && byEmail(c.email)); if (!e) return c; linked.add(e[0]); const p = e[1], pj = dec(p) || {}; return Object.assign({}, c, { name: p.name || c.name, avatar: pj.avatar || c.avatar, poder: pj.poder || c.poder }); });
+      const coaches = (st.coaches || []).map(c => { const e = (c.uid && PR[c.uid] && [c.uid, PR[c.uid]]) || (c.email && byEmail(c.email)); if (!e) return c; linked.add(e[0]); const p = e[1], pj = dec(p) || {}; return Object.assign({}, c, { name: p.name || c.name, avatar: pj.avatar || c.avatar, poder: pj.poder || c.poder, pizarra: pj.pizarra || c.pizarra, uid: c.uid || e[0] }); });
       // todo el que tiene acceso está en el vestuario: su personaje y su poder se guardan solos, sin mandar nada a la DT
       const S = C.state, isMem = (u, p) => (S.memberUids || []).includes(u) || (S.dtUids || []).includes(u) || DT_UIDS.includes(u) || (S.memberEmails || []).includes(norm(p.email));
       Object.entries(PR).forEach(([u, p]) => {
         if (linked.has(u) || !isMem(u, p)) return;
         const name = String(p.name || p.nameHint || '').trim(); if (!name) return;
         const pj = dec(p) || {}, ex = coaches.find(c => norm(c.name) === norm(name));
-        if (ex) Object.assign(ex, { avatar: pj.avatar || ex.avatar, poder: pj.poder || ex.poder }); else coaches.push({ name, uid: u, avatar: pj.avatar, poder: pj.poder, bonus: [] });
+        if (ex) Object.assign(ex, { avatar: pj.avatar || ex.avatar, poder: pj.poder || ex.poder, pizarra: pj.pizarra || ex.pizarra, uid: ex.uid || u }); else coaches.push({ name, uid: u, avatar: pj.avatar, poder: pj.poder, pizarra: pj.pizarra, bonus: [] });
       });
       bank.coaches = coaches;
       // amistosos: cada uno guarda los suyos en su perfil; aquí se juntan los de todos
@@ -207,7 +210,7 @@
     diff('historial', next.historial || [], h => String(h.id).replace(/[^\w.-]/g, '_'), prev.historial);
     diff('liga', next.liga || [], j => 'j' + j.n, prev.liga);
     const rest = Object.assign({}, next); ['tasks', 'historial', 'liga', 'memberUids', 'dtUids', 'memberEmails', 'amistosos', 'sesClub', 'ejClub', 'planClub'].forEach(k => delete rest[k]);
-    rest.coaches = (rest.coaches || []).map(c => (c.uid || c.email) ? Object.assign({ name: c.name, bonus: c.bonus || [] }, c.uid ? { uid: c.uid } : {}, c.email ? { email: c.email } : {}) : c);
+    rest.coaches = (rest.coaches || []).map(c => (c.uid || c.email) ? Object.assign({ name: c.name, bonus: c.bonus || [] }, c.uid ? { uid: c.uid } : {}, c.email ? { email: c.email } : {}) : (({ pizarra, ...x }) => x)(c));
     delete rest.memberEmails;
     ops.push({ op: 'set', path: 'club/state', data: Object.assign(enc(rest), { memberUids: next.memberUids || prev.memberUids || [], memberEmails: next.memberEmails || prev.memberEmails || [], dtUids: next.dtUids || prev.dtUids || [me.uid] }) });
     await B.batch(ops);
@@ -324,6 +327,7 @@
     if (name) d.name = name; else if (me.name && !pulled) d.nameHint = me.name;
     const pj = {}; if (g && g.av) { pj.avatar = g.av; pj.poder = g.poder || ''; }
     if (g && Array.isArray(g.amis) && g.amis.length) pj.amis = g.amis.slice(-10);
+    if (g && g.pizarra) pj.pizarra = g.pizarra;
     if (Object.keys(pj).length) Object.assign(d, enc(pj));
     await B.merge('profiles/' + me.uid, d);
   }
@@ -354,6 +358,12 @@
   // ---------- piezas de pantalla para la app ----------
   window.SMB_CLOUD = {
     push,
+    match: {
+      me: () => me && me.uid,
+      create: m => B.set('partidas/' + m.id, Object.assign({}, m, { ts: Date.now() })),
+      update: (id, patch) => B.merge('partidas/' + id, patch),
+      listen: (id, cb) => B.listenDoc('partidas/' + id, cb, () => {}),
+    },
     send: async o => {
       if (o.kind === 'pj') { await pushProfile(); return; }
       await B.set('inbox/' + (o.kind + '-' + me.uid.slice(0, 8) + '-' + Date.now().toString(36)), { kind: o.kind, code: o.code, title: o.title || '', autor: localStorage.getItem(LS.autor) || '', uid: me.uid, ts: Date.now(), estado: 'nuevo' });
