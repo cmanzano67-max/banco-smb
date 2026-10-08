@@ -174,14 +174,14 @@
       const PR = C.profiles || {};
       const byEmail = em => Object.entries(PR).find(([, p]) => norm(p.email) === norm(em)) || null;
       const linked = new Set();
-      const coaches = (st.coaches || []).map(c => { const e = (c.uid && PR[c.uid] && [c.uid, PR[c.uid]]) || (c.email && byEmail(c.email)); if (!e) return c; linked.add(e[0]); const p = e[1], pj = dec(p) || {}; return Object.assign({}, c, { name: p.name || c.name, avatar: pj.avatar || c.avatar, poder: pj.poder || c.poder, pizarra: pj.pizarra || c.pizarra, uid: c.uid || e[0] }); });
+      const coaches = (st.coaches || []).map(c => { const e = (c.uid && PR[c.uid] && [c.uid, PR[c.uid]]) || (c.email && byEmail(c.email)); if (!e) return c; linked.add(e[0]); const p = e[1], pj = dec(p) || {}; return Object.assign({}, c, { name: p.name || c.name, avatar: pj.avatar || c.avatar, poder: pj.poder || c.poder, pizarra: pj.pizarra || c.pizarra, uid: c.uid || e[0], visto: p.ts || 0 }); });
       // todo el que tiene acceso está en el vestuario: su personaje y su poder se guardan solos, sin mandar nada a la DT
       const S = C.state, isMem = (u, p) => (S.memberUids || []).includes(u) || (S.dtUids || []).includes(u) || DT_UIDS.includes(u) || (S.memberEmails || []).includes(norm(p.email));
       Object.entries(PR).forEach(([u, p]) => {
         if (linked.has(u) || !isMem(u, p)) return;
         const name = String(p.name || p.nameHint || '').trim(); if (!name) return;
         const pj = dec(p) || {}, ex = coaches.find(c => norm(c.name) === norm(name));
-        if (ex) Object.assign(ex, { avatar: pj.avatar || ex.avatar, poder: pj.poder || ex.poder, pizarra: pj.pizarra || ex.pizarra, uid: ex.uid || u }); else coaches.push({ name, uid: u, avatar: pj.avatar, poder: pj.poder, pizarra: pj.pizarra, bonus: [] });
+        if (ex) Object.assign(ex, { avatar: pj.avatar || ex.avatar, poder: pj.poder || ex.poder, pizarra: pj.pizarra || ex.pizarra, uid: ex.uid || u, visto: p.ts || ex.visto || 0 }); else coaches.push({ name, uid: u, avatar: pj.avatar, poder: pj.poder, pizarra: pj.pizarra, bonus: [], visto: p.ts || 0 });
       });
       bank.coaches = coaches;
       // amistosos: cada uno guarda los suyos en su perfil; aquí se juntan los de todos
@@ -373,11 +373,13 @@
       const K = { ej: 'Ejercicio', ses: 'Sesión' };
       return `<section class="ses-sec"><h2 class="h-sec">Recibido · ${C.inbox.length}</h2><ul class="env-list">${C.inbox.map(x => `<li><span class="env-k">${K[x.kind] || x.kind}</span><span class="env-t"><b>${esc(x.title)}</b><small>De ${esc(x.autor || 'un entrenador')} · ${new Date(x.ts).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' })}</small></span><span class="actions"><button class="btn small primary" type="button" data-cl="rv" data-id="${esc(x.id)}">Revisar</button><button class="btn small ghost" type="button" data-cl="done" data-id="${esc(x.id)}">Hecho</button></span></li>`).join('')}</ul></section>`;
     },
+    inboxCount: () => C.inbox.length,
+    waitingCount: () => { const b = lastBank || {}, mem = new Set(b.memberUids || []), memE = new Set(b.memberEmails || []); return Object.entries(C.profiles).filter(([uid, p]) => !mem.has(uid) && !memE.has(norm(p.email)) && !(b.dtUids || []).includes(uid) && !DT_UIDS.includes(uid)).length; },
     accessHTML: () => {
       const b = lastBank || {}, mem = new Set(b.memberUids || []);
       const all = Object.entries(C.profiles);
       const memE = new Set(b.memberEmails || []), has = ([uid, p]) => mem.has(uid) || memE.has(norm(p.email));
-      const pend = all.filter(x => !has(x)), ok = all.filter(x => has(x));
+      const isDTu = u => DT_UIDS.includes(u) || (b.dtUids || []).includes(u), pend = all.filter(x => !has(x) && !isDTu(x[0])), ok = all.filter(x => has(x));
       const row = ([uid, p], btn) => `<li class="dt-row"><span class="dt-thumb cl-ini">${esc((p.name || p.nameHint || p.email || '?').slice(0, 1).toUpperCase())}</span><span class="dt-txt"><b>${esc(p.name || p.nameHint || 'Sin nombre')}${me && uid === me.uid ? ' (tú)' : ''}</b><small>${esc(p.email || '')}</small></span>${btn}</li>`;
       const emailsIn = new Set(Object.values(C.profiles).map(p => norm(p.email)));
       const pre = (b.memberEmails || []).filter(e => !emailsIn.has(e)).map(e => ({ e, c: (b.coaches || []).find(x => norm(x.email) === e) }));
@@ -390,8 +392,8 @@
         ${ok.length ? `<details><summary>Con acceso (${ok.length})</summary><ul class="dt-list">${ok.map(x => row(x, `<button class="btn small ghost" type="button" data-cl="revoke" data-uid="${esc(x[0])}">Quitar acceso</button>`)).join('')}</ul></details>` : ''}
       </section>`;
     },
-    restoreHTML: () => `<section class="ses-sec"><h2 class="h-sec">Restaurar el banco</h2><p class="sub">Sustituye el banco por una copia descargada antes. Los accesos se mantienen.</p>
-      <label class="ses-f">Copia (.json)<input type="file" id="cl-restorefile" accept=".json,application/json"></label><div class="actions"><button class="btn" type="button" data-cl="restore">Restaurar</button></div></section>`,
+    restoreHTML: () => `<h3 class="h-sub">Restaurar el banco</h3><p class="sub">Sustituye el banco por una copia descargada antes. Los accesos se mantienen.</p>
+      <label class="ses-f">Copia (.json)<input type="file" id="cl-restorefile" accept=".json,application/json"></label><div class="actions"><button class="btn" type="button" data-cl="restore">Restaurar</button></div>`,
     accountHTML: () => `<h3 class="h-sub">Tu cuenta</h3><p class="sub">${esc(me ? me.email || me.name : '')}. Lo tuyo se guarda en tu cuenta: entra con ella en cualquier móvil u ordenador.</p><div class="actions"><button class="btn ghost" type="button" data-cl="out">Cerrar sesión</button></div>`,
   };
 })();
