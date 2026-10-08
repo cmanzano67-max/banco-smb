@@ -11,7 +11,7 @@
   const dec = d => { try { return d && typeof d.j === 'string' ? JSON.parse(d.j) : null; } catch (e) { return null; } };
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const norm = s => String(s || '').trim().toLowerCase();
-  const LS = { mine: 'smb-banco-mis-versiones', sessions: 'smb-banco-sesiones', autor: 'smb-banco-autor', game: 'smb-banco-personaje', envios: 'smb-banco-envios' };
+  const LS = { mine: 'smb-banco-mis-versiones', sessions: 'smb-banco-sesiones', autor: 'smb-banco-autor', game: 'smb-banco-personaje', envios: 'smb-banco-envios', plan: 'smb-banco-plan' };
   const readLS = (k, d) => { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } };
   const DT_UIDS = window.SMB_DT_UIDS || [];
 
@@ -187,6 +187,7 @@
       const sh = (C.shared || []).map(x => ({ id: x.id, k: x.data.k || 'ses', autor: x.data.autor || '', ts: x.data.ts || 0, mine: !!me && x.data.uid === me.uid, d: dec(x.data) })).filter(x => x.d);
       bank.sesClub = sh.filter(x => x.k === 'ses' && Array.isArray(x.d.bloques)).map(x => ({ id: x.id, autor: x.autor, ts: x.ts, mine: x.mine, s: x.d }));
       bank.ejClub = sh.filter(x => x.k === 'ej' && x.d.id).map(x => ({ id: x.id, autor: x.autor, ts: x.ts, mine: x.mine, t: x.d }));
+      bank.planClub = sh.filter(x => x.k === 'plan').map(x => ({ id: x.id, autor: x.autor, mine: x.mine, plan: x.d.plan || {} }));
       lastBank = bank;
       if (window.SMB) window.SMB.setBank(bank);
     }, 60);
@@ -205,7 +206,7 @@
     diff('tasks', next.tasks || [], t => t.id, prev.tasks);
     diff('historial', next.historial || [], h => String(h.id).replace(/[^\w.-]/g, '_'), prev.historial);
     diff('liga', next.liga || [], j => 'j' + j.n, prev.liga);
-    const rest = Object.assign({}, next); ['tasks', 'historial', 'liga', 'memberUids', 'dtUids', 'memberEmails', 'amistosos', 'sesClub', 'ejClub'].forEach(k => delete rest[k]);
+    const rest = Object.assign({}, next); ['tasks', 'historial', 'liga', 'memberUids', 'dtUids', 'memberEmails', 'amistosos', 'sesClub', 'ejClub', 'planClub'].forEach(k => delete rest[k]);
     rest.coaches = (rest.coaches || []).map(c => (c.uid || c.email) ? Object.assign({ name: c.name, bonus: c.bonus || [] }, c.uid ? { uid: c.uid } : {}, c.email ? { email: c.email } : {}) : c);
     delete rest.memberEmails;
     ops.push({ op: 'set', path: 'club/state', data: Object.assign(enc(rest), { memberUids: next.memberUids || prev.memberUids || [], memberEmails: next.memberEmails || prev.memberEmails || [], dtUids: next.dtUids || prev.dtUids || [me.uid] }) });
@@ -270,6 +271,7 @@
         if (m.autor) localStorage.setItem(LS.autor, m.autor);
         if (m.game) localStorage.setItem(LS.game, JSON.stringify(m.game));
         if (m.envios) localStorage.setItem(LS.envios, JSON.stringify(m.envios));
+        if (m.plan) localStorage.setItem(LS.plan, JSON.stringify(Object.assign({}, m.plan, readLS(LS.plan, {}))));
       } catch (e) {}
     }
     pulled = true;
@@ -293,7 +295,7 @@
       pushShared();
       lastPushed[k] = new Map(list.filter(t => t && t.id).map(t => [t.id, JSON.stringify(t)]));
     } else {
-      await B.set(base + '/meta/state', enc({ autor: localStorage.getItem(LS.autor) || '', game: readLS(LS.game, null), envios: readLS(LS.envios, []) }));
+      await B.set(base + '/meta/state', enc({ autor: localStorage.getItem(LS.autor) || '', game: readLS(LS.game, null), envios: readLS(LS.envios, []), plan: readLS(LS.plan, {}) }));
       await pushProfile();
       pushShared(); // por si ha cambiado el nombre
     }
@@ -310,6 +312,8 @@
     readLS(LS.sessions, []).forEach(ss => { if (ss && ss.id && (ss.bloques || []).some(b => b && b.task)) add('ses', ss, ss.ts); });
     // los ejercicios propios con nombre (los borradores no salen hasta que se guardan de verdad)
     readLS(LS.mine, []).forEach(t => { if (t && t.id && (t.title || '').trim() && !t.borrador) add('ej', t, t.ts); });
+    // la planificación (mesociclo) de cada uno, en un solo documento
+    const pl = readLS(LS.plan, {}); if (Object.keys(pl).length) add('plan', { id: 'plan', plan: pl }, Date.now());
     mineDocs.forEach((v, id) => { if (!keep.has(id)) ops.push({ op: 'del', path: 'shared/' + id }); });
     if (ops.length) await B.batch(ops).catch(() => {});
   }
