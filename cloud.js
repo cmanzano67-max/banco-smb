@@ -174,14 +174,14 @@
       const PR = C.profiles || {};
       const byEmail = em => Object.entries(PR).find(([, p]) => norm(p.email) === norm(em)) || null;
       const linked = new Set();
-      const coaches = (st.coaches || []).map(c => { const e = (c.uid && PR[c.uid] && [c.uid, PR[c.uid]]) || (c.email && byEmail(c.email)); if (!e) return c; linked.add(e[0]); const p = e[1], pj = dec(p) || {}; return Object.assign({}, c, { name: p.name || c.name, avatar: pj.avatar || c.avatar, poder: pj.poder || c.poder, pizarra: pj.pizarra || c.pizarra, uid: c.uid || e[0], visto: p.ts || 0 }); });
+      const coaches = (st.coaches || []).map(c => { const e = (c.uid && PR[c.uid] && [c.uid, PR[c.uid]]) || (c.email && byEmail(c.email)); if (!e) return c; linked.add(e[0]); const p = e[1], pj = dec(p) || {}; return Object.assign({}, c, { name: p.name || c.name, avatar: pj.avatar || c.avatar, poder: pj.poder || c.poder, pizarra: pj.pizarra || c.pizarra, estilo: pj.estilo || c.estilo, uid: c.uid || e[0], visto: p.ts || 0 }); });
       // todo el que tiene acceso está en el vestuario: su personaje y su poder se guardan solos, sin mandar nada a la DT
       const S = C.state, isMem = (u, p) => (S.memberUids || []).includes(u) || (S.dtUids || []).includes(u) || DT_UIDS.includes(u) || (S.memberEmails || []).includes(norm(p.email));
       Object.entries(PR).forEach(([u, p]) => {
         if (linked.has(u) || !isMem(u, p)) return;
         const name = String(p.name || p.nameHint || '').trim(); if (!name) return;
         const pj = dec(p) || {}, ex = coaches.find(c => norm(c.name) === norm(name));
-        if (ex) Object.assign(ex, { avatar: pj.avatar || ex.avatar, poder: pj.poder || ex.poder, pizarra: pj.pizarra || ex.pizarra, uid: ex.uid || u, visto: p.ts || ex.visto || 0 }); else coaches.push({ name, uid: u, avatar: pj.avatar, poder: pj.poder, pizarra: pj.pizarra, bonus: [], visto: p.ts || 0 });
+        if (ex) Object.assign(ex, { avatar: pj.avatar || ex.avatar, poder: pj.poder || ex.poder, pizarra: pj.pizarra || ex.pizarra, estilo: pj.estilo || ex.estilo, uid: ex.uid || u, visto: p.ts || ex.visto || 0 }); else coaches.push({ name, uid: u, avatar: pj.avatar, poder: pj.poder, pizarra: pj.pizarra, estilo: pj.estilo, bonus: [], visto: p.ts || 0 });
       });
       bank.coaches = coaches;
       // amistosos: cada uno guarda los suyos en su perfil; aquí se juntan los de todos
@@ -328,6 +328,7 @@
     const pj = {}; if (g && g.av) { pj.avatar = g.av; pj.poder = g.poder || ''; }
     if (g && Array.isArray(g.amis) && g.amis.length) pj.amis = g.amis.slice(-10);
     if (g && g.pizarra) pj.pizarra = g.pizarra;
+    if (g && g.estilo) pj.estilo = g.estilo;
     if (Object.keys(pj).length) Object.assign(d, enc(pj));
     await B.merge('profiles/' + me.uid, d);
   }
